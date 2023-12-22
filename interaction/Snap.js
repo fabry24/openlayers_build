@@ -7,6 +7,7 @@ import PointerInteraction from './Pointer.js';
 import RBush from '../structs/RBush.js';
 import VectorEventType from '../source/VectorEventType.js';
 import {FALSE, TRUE} from '../functions.js';
+import {SnapEvent, SnapEventType} from '../events/SnapEvent.js';
 import {boundingExtent, buffer, createEmpty} from '../extent.js';
 import {
   closestOnCircle,
@@ -27,6 +28,8 @@ import {listen, unlistenByKey} from '../events.js';
  * @typedef {Object} Result
  * @property {import("../coordinate.js").Coordinate|null} vertex Vertex.
  * @property {import("../pixel.js").Pixel|null} vertexPixel VertexPixel.
+ * @property {import("../Feature.js").default|null} feature Feature.
+ * @property {Array<import("../coordinate.js").Coordinate>|null} segment Segment, or `null` if snapped to a vertex.
  */
 
 /**
@@ -47,7 +50,7 @@ import {listen, unlistenByKey} from '../events.js';
 
 /**
  * @param  {import("../source/Vector.js").VectorSourceEvent|import("../Collection.js").CollectionEvent<import("../Feature.js").default>} evt Event.
- * @return {import("../Feature.js").default} Feature.
+ * @return {import("../Feature.js").default|null} Feature.
  */
 function getFeatureFromEvent(evt) {
   if (
@@ -55,7 +58,8 @@ function getFeatureFromEvent(evt) {
   ) {
     return /** @type {import("../source/Vector.js").VectorSourceEvent} */ (evt)
       .feature;
-  } else if (
+  }
+  if (
     /** @type {import("../Collection.js").CollectionEvent<import("../Feature.js").default>} */ (
       evt
     ).element
@@ -64,9 +68,20 @@ function getFeatureFromEvent(evt) {
       evt
     ).element;
   }
+  return null;
 }
 
 const tempSegment = [];
+
+/***
+ * @template Return
+ * @typedef {import("../Observable").OnSignature<import("../Observable").EventTypes, import("../events/Event.js").default, Return> &
+ *   import("../Observable").OnSignature<import("../ObjectEventType").Types|
+ *     'change:active', import("../Object").ObjectEvent, Return> &
+ *   import("../Observable").OnSignature<'snap', SnapEvent, Return> &
+ *   import("../Observable").CombinedOnSignature<import("../Observable").EventTypes|import("../ObjectEventType").Types|
+ *     'change:active'|'snap', Return>} SnapOnSignature
+ */
 
 /**
  * @classdesc
@@ -89,6 +104,7 @@ const tempSegment = [];
  *
  *     map.addInteraction(snap);
  *
+ * @fires SnapEvent
  * @api
  */
 class Snap extends PointerInteraction {
@@ -111,6 +127,21 @@ class Snap extends PointerInteraction {
     }
 
     super(pointerOptions);
+
+    /***
+     * @type {SnapOnSignature<import("../events").EventsKey>}
+     */
+    this.on;
+
+    /***
+     * @type {SnapOnSignature<import("../events").EventsKey>}
+     */
+    this.once;
+
+    /***
+     * @type {SnapOnSignature<void>}
+     */
+    this.un;
 
     /**
      * @type {import("../source/Vector.js").default|null}
@@ -244,22 +275,6 @@ class Snap extends PointerInteraction {
   }
 
   /**
-   * @param {import("../Feature.js").default} feature Feature.
-   * @private
-   */
-  forEachFeatureAdd_(feature) {
-    this.addFeature(feature);
-  }
-
-  /**
-   * @param {import("../Feature.js").default} feature Feature.
-   * @private
-   */
-  forEachFeatureRemove_(feature) {
-    this.removeFeature(feature);
-  }
-
-  /**
    * @return {import("../Collection.js").default<import("../Feature.js").default>|Array<import("../Feature.js").default>} Features.
    * @private
    */
@@ -277,12 +292,21 @@ class Snap extends PointerInteraction {
   /**
    * @param {import("../MapBrowserEvent.js").default} evt Map browser event.
    * @return {boolean} `false` to stop event propagation.
+   * @api
    */
   handleEvent(evt) {
     const result = this.snapTo(evt.pixel, evt.coordinate, evt.map);
     if (result) {
       evt.coordinate = result.vertex.slice(0, 2);
       evt.pixel = result.vertexPixel;
+      this.dispatchEvent(
+        new SnapEvent(SnapEventType.SNAP, {
+          vertex: evt.coordinate,
+          vertexPixel: evt.pixel,
+          feature: result.feature,
+          segment: result.segment,
+        })
+      );
     }
     return super.handleEvent(evt);
   }
@@ -293,7 +317,9 @@ class Snap extends PointerInteraction {
    */
   handleFeatureAdd_(evt) {
     const feature = getFeatureFromEvent(evt);
-    this.addFeature(feature);
+    if (feature) {
+      this.addFeature(feature);
+    }
   }
 
   /**
@@ -302,7 +328,9 @@ class Snap extends PointerInteraction {
    */
   handleFeatureRemove_(evt) {
     const feature = getFeatureFromEvent(evt);
-    this.removeFeature(feature);
+    if (feature) {
+      this.removeFeature(feature);
+    }
   }
 
   /**
@@ -381,7 +409,9 @@ class Snap extends PointerInteraction {
     if (currentMap) {
       keys.forEach(unlistenByKey);
       keys.length = 0;
-      features.forEach(this.forEachFeatureRemove_.bind(this));
+      this.rBush_.clear();
+      Object.values(this.featureChangeListenerKeys_).forEach(unlistenByKey);
+      this.featureChangeListenerKeys_ = {};
     }
     super.setMap(map);
 
@@ -417,7 +447,7 @@ class Snap extends PointerInteraction {
           )
         );
       }
-      features.forEach(this.forEachFeatureAdd_.bind(this));
+      features.forEach((feature) => this.addFeature(feature));
     }
   }
 
@@ -440,7 +470,6 @@ class Snap extends PointerInteraction {
     );
 
     const segments = this.rBush_.getInExtent(box);
-
     const segmentsLength = segments.length;
     if (segmentsLength === 0) {
       return null;
@@ -448,6 +477,8 @@ class Snap extends PointerInteraction {
 
     let closestVertex;
     let minSquaredDistance = Infinity;
+    let closestFeature;
+    let closestSegment = null;
 
     const squaredPixelTolerance = this.pixelTolerance_ * this.pixelTolerance_;
     const getResult = () => {
@@ -461,6 +492,8 @@ class Snap extends PointerInteraction {
               Math.round(vertexPixel[0]),
               Math.round(vertexPixel[1]),
             ],
+            feature: closestFeature,
+            segment: closestSegment,
           };
         }
       }
@@ -477,6 +510,7 @@ class Snap extends PointerInteraction {
             if (delta < minSquaredDistance) {
               closestVertex = vertex;
               minSquaredDistance = delta;
+              closestFeature = segmentData.feature;
             }
           });
         }
@@ -516,6 +550,10 @@ class Snap extends PointerInteraction {
           const delta = squaredDistance(projectedCoordinate, vertex);
           if (delta < minSquaredDistance) {
             closestVertex = toUserCoordinate(vertex, projection);
+            closestSegment =
+              segmentData.feature.getGeometry().getType() === 'Circle'
+                ? null
+                : segmentData.segment;
             minSquaredDistance = delta;
           }
         }

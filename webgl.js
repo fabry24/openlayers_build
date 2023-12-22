@@ -83,18 +83,12 @@ export const FLOAT = 0x1406;
  * @const
  * @type {Array<string>}
  */
-const CONTEXT_IDS = [
-  'webgl2',
-  'experimental-webgl',
-  'webgl',
-  'webkit-3d',
-  'moz-webgl',
-];
+const CONTEXT_IDS = ['experimental-webgl', 'webgl', 'webkit-3d', 'moz-webgl'];
 
 /**
  * @param {HTMLCanvasElement} canvas Canvas.
  * @param {Object} [attributes] Attributes.
- * @return {WebGLRenderingContext | WebGL2RenderingContext} WebGL rendering context.
+ * @return {WebGLRenderingContext|null} WebGL rendering context.
  */
 export function getContext(canvas, attributes) {
   attributes = Object.assign(
@@ -108,11 +102,8 @@ export function getContext(canvas, attributes) {
   for (let i = 0; i < ii; ++i) {
     try {
       const context = canvas.getContext(CONTEXT_IDS[i], attributes);
-
       if (context) {
-        return /** @type {!WebGLRenderingContext | !WebGL2RenderingContext} */ (
-          context
-        );
+        return /** @type {!WebGLRenderingContext} */ (context);
       }
     } catch (e) {
       // pass
@@ -122,12 +113,12 @@ export function getContext(canvas, attributes) {
 }
 
 /**
- * @type {Array<string>}
+ * @type {Array<string>|null}
  */
-let supportedExtensions;
+let supportedExtensions = null;
 
 /**
- * @return {Array<string>} List of supported WebGL extensions.
+ * @return {Array<string>|null} List of supported WebGL extensions.
  */
 export function getSupportedExtensions() {
   if (!supportedExtensions) {
