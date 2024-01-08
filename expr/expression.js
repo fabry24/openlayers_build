@@ -366,6 +366,8 @@ export const Ops = {
   Id: 'id',
   Band: 'band',
   Palette: 'palette',
+  Min: 'min',
+  Max: 'max'
 };
 
 /**
@@ -613,6 +615,16 @@ const parsers = {
     parseArgsOfType(NumberType)
   ),
   [Ops.Palette]: createParser(ColorType, withArgsCount(2, 2), parsePaletteArgs),
+  [Ops.Min]: createParser(
+    NumberType,
+    withArgsCount(2, Infinity),
+    parseArgsOfType(NumberType)
+  ),
+  [Ops.Max]: createParser(
+    NumberType,
+    withArgsCount(2, Infinity),
+    parseArgsOfType(NumberType)
+  ),
 };
 
 /**
