@@ -481,6 +481,7 @@ class WebGLTileLayer extends BaseTileLayer {
     renderer.reset({
       vertexShader: parsedStyle.vertexShader,
       fragmentShader: parsedStyle.fragmentShader,
+      cacheSize: this.cacheSize_,
       uniforms: parsedStyle.uniforms,
       paletteTextures: parsedStyle.paletteTextures,
     });
